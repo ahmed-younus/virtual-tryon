@@ -71,10 +71,10 @@ export async function POST(request: NextRequest) {
       // Convert to base64
       base64Result = `data:image/jpeg;base64,${Buffer.from(combined).toString('base64')}`;
       console.log('Successfully converted binary data to base64');
-    } else if (typeof output === 'string' && output.startsWith('http')) {
+    } else if (typeof output === 'string' && (output as string).startsWith('http')) {
       // Handle URL format (legacy)
       console.log('Fetching image from URL:', output);
-      const imageResponse = await fetch(output);
+      const imageResponse = await fetch(output as string);
       const imageBlob = await imageResponse.blob();
       const buffer = await imageBlob.arrayBuffer();
       base64Result = `data:image/jpeg;base64,${Buffer.from(buffer).toString('base64')}`;
