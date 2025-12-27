@@ -25,10 +25,25 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('Starting Replicate virtual try-on with p-image-edit...');
+    console.log('Category:', category);
 
     const replicate = new Replicate({
       auth: REPLICATE_API_TOKEN,
     });
+
+    // Generate category-specific prompt
+    let clothingPrompt = '';
+
+    if (category === 'lower_body') {
+      clothingPrompt = `Replace ONLY the pants/trousers/lower body clothing of the person in image 1 with the exact pants/jeans/trousers from image 2. Keep the upper body clothing (shirt, t-shirt, jacket) EXACTLY as it is - do not change it. Focus ONLY on replacing the lower body garment (pants, jeans, trousers, shorts, skirt). The new pants must fit naturally on the person's legs and waist.`;
+    } else if (category === 'dresses') {
+      clothingPrompt = `Replace the entire outfit of the person in image 1 with the dress/full outfit from image 2. This is a full body garment replacement including both upper and lower body.`;
+    } else {
+      // upper_body (default)
+      clothingPrompt = `Replace ONLY the upper body clothing (shirt, t-shirt, top, jacket) of the person in image 1 with the exact garment from image 2. Keep the lower body clothing (pants, jeans, trousers) EXACTLY as it is - do not change it. Focus ONLY on replacing the upper body garment.`;
+    }
+
+    const fullPrompt = `${clothingPrompt} CRITICAL COLOR REQUIREMENTS: Match the EXACT colors from image 2 - DO NOT make them brighter, more saturated, or more vibrant. Keep the natural, realistic color tones exactly as they appear in the garment image. If the clothing is dark, keep it dark. If it's muted, keep it muted. DO NOT enhance, brighten, or over-saturate the colors. Preserve the exact RGB values and color accuracy from the original garment. Keep patterns, textures, and all design details identical to image 2. Maintain realistic fabric texture and material appearance with natural lighting - avoid artificial brightening or color enhancement. Ensure natural fitting with realistic wrinkles and folds. Keep the person's pose, body structure unchanged. Result must look photorealistic with accurate color reproduction, not artificially enhanced or brightened.`;
 
     // Use p-image-edit model for multi-image editing
     // This model can change clothes on a person using prompt + images
@@ -37,7 +52,7 @@ export async function POST(request: NextRequest) {
       {
         input: {
           images: [userImage, clothImage],
-          prompt: `Replace the clothes of the person in image 1 with the exact clothing item from image 2. CRITICAL COLOR REQUIREMENTS: Match the EXACT colors from image 2 - DO NOT make them brighter, more saturated, or more vibrant. Keep the natural, realistic color tones exactly as they appear in the garment image. If the clothing is dark, keep it dark. If it's muted, keep it muted. DO NOT enhance, brighten, or over-saturate the colors. Preserve the exact RGB values and color accuracy from the original garment. Keep patterns, textures, and all design details identical to image 2. Maintain realistic fabric texture and material appearance with natural lighting - avoid artificial brightening or color enhancement. Ensure natural fitting with realistic wrinkles and folds. Keep the person's pose, body structure unchanged. Result must look photorealistic with accurate color reproduction, not artificially enhanced or brightened.`,
+          prompt: fullPrompt,
           turbo: false, // Better quality for complex editing
           aspect_ratio: "match_input_image",
           seed: 42
