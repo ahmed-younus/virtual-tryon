@@ -38,6 +38,8 @@ export async function POST(request: NextRequest) {
       clothingPrompt = `Replace ONLY the pants/trousers/lower body clothing of the person in image 1 with the exact pants/jeans/trousers from image 2. Keep the upper body clothing (shirt, t-shirt, jacket) EXACTLY as it is - do not change it. Focus ONLY on replacing the lower body garment (pants, jeans, trousers, shorts, skirt). The new pants must fit naturally on the person's legs and waist.`;
     } else if (category === 'dresses') {
       clothingPrompt = `Replace the entire outfit of the person in image 1 with the dress/full outfit from image 2. This is a full body garment replacement including both upper and lower body.`;
+    } else if (category === 'accessories') {
+      clothingPrompt = `Add the accessory from image 2 to the person in image 1. If it's glasses/sunglasses, place them naturally on the person's face. If it's a watch, place it on the wrist. If it's a hat/cap, place it on the head. If it's shoes, replace the footwear. Keep all clothing and other accessories unchanged. The accessory must look naturally worn/placed on the person.`;
     } else {
       // upper_body (default)
       clothingPrompt = `Replace ONLY the upper body clothing (shirt, t-shirt, top, jacket) of the person in image 1 with the exact garment from image 2. Keep the lower body clothing (pants, jeans, trousers) EXACTLY as it is - do not change it. Focus ONLY on replacing the upper body garment.`;
