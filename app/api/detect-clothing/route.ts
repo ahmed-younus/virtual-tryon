@@ -46,44 +46,83 @@ export async function POST(request: NextRequest) {
     let detectedType = String(output).trim().toUpperCase();
 
     // Map to our categories
-    let category: 'upper_body' | 'lower_body' | 'dresses' | 'accessories' = 'upper_body';
+    let category: 'upper_body' | 'lower_body' | 'dresses' | 'shoes' | 'eyewear' | 'headwear' | 'watch' = 'upper_body';
     let itemType = 'clothing';
 
     const upperBodyItems = ['SHIRT', 'TSHIRT', 'T-SHIRT', 'JACKET', 'HOODIE', 'SWEATER', 'COAT', 'TOP', 'BLOUSE', 'CARDIGAN'];
     const lowerBodyItems = ['PANTS', 'JEANS', 'TROUSERS', 'SHORTS', 'SKIRT'];
     const dressItems = ['DRESS', 'GOWN', 'JUMPSUIT', 'ROMPER'];
-    const accessoryItems = ['GLASSES', 'SUNGLASSES', 'WATCH', 'HAT', 'CAP', 'SHOES', 'SNEAKERS', 'BOOTS', 'BAG', 'BELT', 'SCARF', 'TIE', 'JEWELRY', 'NECKLACE', 'BRACELET', 'EARRING'];
+    const shoeItems = ['SHOES', 'SNEAKERS', 'BOOTS', 'SANDALS', 'HEELS', 'LOAFERS', 'TRAINERS'];
+    const eyewearItems = ['GLASSES', 'SUNGLASSES', 'EYEGLASSES', 'SPECTACLES'];
+    const headwearItems = ['HAT', 'CAP', 'BEANIE', 'HEADBAND', 'TURBAN'];
+    const watchItems = ['WATCH', 'SMARTWATCH'];
 
-    // Clean up the detected type
-    for (const item of upperBodyItems) {
+    // Clean up the detected type - check most specific categories first
+    for (const item of shoeItems) {
       if (detectedType.includes(item)) {
-        category = 'upper_body';
+        category = 'shoes';
         itemType = item.toLowerCase();
         break;
       }
     }
 
-    for (const item of lowerBodyItems) {
-      if (detectedType.includes(item)) {
-        category = 'lower_body';
-        itemType = item.toLowerCase();
-        break;
+    if (category === 'upper_body') {
+      for (const item of eyewearItems) {
+        if (detectedType.includes(item)) {
+          category = 'eyewear';
+          itemType = item.toLowerCase();
+          break;
+        }
       }
     }
 
-    for (const item of dressItems) {
-      if (detectedType.includes(item)) {
-        category = 'dresses';
-        itemType = item.toLowerCase();
-        break;
+    if (category === 'upper_body') {
+      for (const item of headwearItems) {
+        if (detectedType.includes(item)) {
+          category = 'headwear';
+          itemType = item.toLowerCase();
+          break;
+        }
       }
     }
 
-    for (const item of accessoryItems) {
-      if (detectedType.includes(item)) {
-        category = 'accessories';
-        itemType = item.toLowerCase();
-        break;
+    if (category === 'upper_body') {
+      for (const item of watchItems) {
+        if (detectedType.includes(item)) {
+          category = 'watch';
+          itemType = item.toLowerCase();
+          break;
+        }
+      }
+    }
+
+    if (category === 'upper_body') {
+      for (const item of upperBodyItems) {
+        if (detectedType.includes(item)) {
+          category = 'upper_body';
+          itemType = item.toLowerCase();
+          break;
+        }
+      }
+    }
+
+    if (category === 'upper_body') {
+      for (const item of lowerBodyItems) {
+        if (detectedType.includes(item)) {
+          category = 'lower_body';
+          itemType = item.toLowerCase();
+          break;
+        }
+      }
+    }
+
+    if (category === 'upper_body') {
+      for (const item of dressItems) {
+        if (detectedType.includes(item)) {
+          category = 'dresses';
+          itemType = item.toLowerCase();
+          break;
+        }
       }
     }
 

@@ -143,15 +143,55 @@ async function browserScrape(url: string): Promise<string | null> {
   try {
     console.log('Starting headless browser for:', url);
 
-    // Configure for serverless environment
-    const executablePath = await chromium.executablePath();
+    // Detect environment and configure accordingly
+    const isVercel = process.env.VERCEL === '1' || process.env.AWS_LAMBDA_FUNCTION_NAME;
 
-    browser = await puppeteer.launch({
-      args: chromium.args,
-      defaultViewport: { width: 1920, height: 1080 },
-      executablePath: executablePath,
-      headless: true,
-    });
+    let launchOptions;
+
+    if (isVercel) {
+      // Serverless environment (Vercel/AWS Lambda)
+      const executablePath = await chromium.executablePath();
+      launchOptions = {
+        args: chromium.args,
+        defaultViewport: { width: 1920, height: 1080 },
+        executablePath: executablePath,
+        headless: true,
+      };
+    } else {
+      // Local development - find Chrome on Windows/Mac/Linux
+      const possiblePaths = [
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium-browser',
+      ];
+
+      let chromePath = null;
+      for (const p of possiblePaths) {
+        try {
+          const fs = await import('fs');
+          if (fs.existsSync(p)) {
+            chromePath = p;
+            break;
+          }
+        } catch {}
+      }
+
+      if (!chromePath) {
+        console.log('Chrome not found locally, skipping browser scrape');
+        return null;
+      }
+
+      launchOptions = {
+        executablePath: chromePath,
+        headless: true,
+        defaultViewport: { width: 1920, height: 1080 },
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      };
+    }
+
+    browser = await puppeteer.launch(launchOptions);
 
     const page = await browser.newPage();
 

@@ -2,21 +2,27 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
+import ImagePickerPopup from './components/ImagePickerPopup';
 
-type Category = 'upper_body' | 'lower_body' | 'dresses' | 'accessories';
+type Category = 'upper_body' | 'lower_body' | 'dresses' | 'shoes' | 'eyewear' | 'headwear' | 'watch';
+
+interface ClothItem {
+  image: string;
+  category: Category;
+  detectedItem: string;
+}
 
 export default function Home() {
   const [userImage, setUserImage] = useState<string | null>(null);
-  const [clothImage, setClothImage] = useState<string | null>(null);
+  const [clothImages, setClothImages] = useState<ClothItem[]>([]);
   const [productUrl, setProductUrl] = useState<string>('');
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState<string>('');
   const [detectingClothing, setDetectingClothing] = useState(false);
-  const [scrapingImage, setScrapingImage] = useState(false);
   const [error, setError] = useState<string>('');
-  const [category, setCategory] = useState<Category>('upper_body');
   const [autoDetect, setAutoDetect] = useState(true);
-  const [detectedItem, setDetectedItem] = useState<string>('');
+  const [showImagePicker, setShowImagePicker] = useState(false);
 
   const handleUserImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -29,8 +35,8 @@ export default function Home() {
     }
   };
 
-  const detectClothingType = async (imageData: string) => {
-    if (!autoDetect) return;
+  const detectClothingType = async (imageData: string): Promise<{ category: Category; itemType: string } | null> => {
+    if (!autoDetect) return null;
 
     setDetectingClothing(true);
     try {
@@ -42,11 +48,12 @@ export default function Home() {
 
       const data = await response.json();
       if (response.ok && data.category) {
-        setCategory(data.category);
-        setDetectedItem(data.itemType);
+        return { category: data.category, itemType: data.itemType };
       }
+      return null;
     } catch (err) {
       console.error('Failed to detect clothing type:', err);
+      return null;
     } finally {
       setDetectingClothing(false);
     }
@@ -58,51 +65,56 @@ export default function Home() {
       const reader = new FileReader();
       reader.onloadend = async () => {
         const imageData = reader.result as string;
-        setClothImage(imageData);
         setProductUrl('');
-        setDetectedItem('');
 
         // Auto-detect clothing type
-        await detectClothingType(imageData);
+        const detected = await detectClothingType(imageData);
+        const newItem: ClothItem = {
+          image: imageData,
+          category: detected?.category || 'upper_body',
+          detectedItem: detected?.itemType || '',
+        };
+        setClothImages(prev => [...prev, newItem]);
       };
       reader.readAsDataURL(file);
     }
   };
 
-  const handleProductUrlSubmit = async () => {
-    if (!productUrl) return;
+  const removeClothImage = (index: number) => {
+    setClothImages(prev => prev.filter((_, i) => i !== index));
+  };
 
-    setScrapingImage(true);
+  const updateClothCategory = (index: number, category: Category) => {
+    setClothImages(prev => prev.map((item, i) =>
+      i === index ? { ...item, category } : item
+    ));
+  };
+
+  const handleProductUrlSubmit = () => {
+    if (!productUrl) return;
     setError('');
 
-    try {
-      const response = await fetch('/api/scrape-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: productUrl }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to extract image');
-      }
-
-      if (data.base64Image) {
-        setClothImage(data.base64Image);
-        setDetectedItem('');
-
-        // Auto-detect clothing type
-        await detectClothingType(data.base64Image);
-      } else if (data.imageUrl) {
-        // If we got URL but not base64, try to use the URL directly
-        setClothImage(data.imageUrl);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to extract product image');
-    } finally {
-      setScrapingImage(false);
+    // Auto-add https:// if missing
+    let normalizedUrl = productUrl.trim();
+    if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
+      normalizedUrl = 'https://' + normalizedUrl;
+      setProductUrl(normalizedUrl);
     }
+
+    setShowImagePicker(true);
+  };
+
+  const handleImagePickerSelect = async (imageData: string) => {
+    setShowImagePicker(false);
+
+    // Auto-detect clothing type
+    const detected = await detectClothingType(imageData);
+    const newItem: ClothItem = {
+      image: imageData,
+      category: detected?.category || 'upper_body',
+      detectedItem: detected?.itemType || '',
+    };
+    setClothImages(prev => [...prev, newItem]);
   };
 
   const handleTryOn = async () => {
@@ -111,38 +123,73 @@ export default function Home() {
       return;
     }
 
-    if (!clothImage) {
-      setError('Please upload a cloth image or provide a product URL');
+    if (clothImages.length === 0) {
+      setError('Please upload at least one product image');
       return;
     }
 
     setLoading(true);
     setError('');
+    setLoadingProgress('');
 
     try {
-      const response = await fetch('/api/tryon', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userImage,
-          clothImage,
-          category,
-        }),
-      });
+      // Sort items by priority: upper_body first, then lower_body, then accessories
+      // This gives more consistent results as the model works better with this order
+      const categoryPriority: Record<Category, number> = {
+        'upper_body': 1,
+        'lower_body': 2,
+        'dresses': 1,
+        'shoes': 3,
+        'eyewear': 4,
+        'headwear': 4,
+        'watch': 4,
+      };
 
-      const data = await response.json();
+      const sortedClothImages = [...clothImages].sort((a, b) =>
+        categoryPriority[a.category] - categoryPriority[b.category]
+      );
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to process virtual try-on');
+      let currentImage = userImage;
+
+      // Process each cloth image sequentially with delays between calls
+      for (let i = 0; i < sortedClothImages.length; i++) {
+        const clothItem = sortedClothImages[i];
+        setLoadingProgress(`Applying ${clothItem.detectedItem || clothItem.category} (${i + 1}/${sortedClothImages.length})...`);
+
+        // Add delay between API calls for more consistent results (except for first call)
+        if (i > 0) {
+          setLoadingProgress(`Stabilizing... then applying ${clothItem.detectedItem || clothItem.category} (${i + 1}/${sortedClothImages.length})...`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+
+        const response = await fetch('/api/tryon', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            userImage: currentImage,
+            clothImage: clothItem.image,
+            category: clothItem.category,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || `Failed to apply ${clothItem.detectedItem || clothItem.category}`);
+        }
+
+        // Use result as input for next iteration
+        currentImage = data.result;
       }
 
-      setResultImage(data.result);
+      setResultImage(currentImage);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setLoading(false);
+      setLoadingProgress('');
     }
   };
 
@@ -203,36 +250,72 @@ export default function Home() {
 
           {/* Cloth Image Upload */}
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6">
-            <h2 className="text-2xl font-semibold mb-4 text-gray-800 dark:text-white">
-              Product Image
-            </h2>
-            <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-8 text-center hover:border-blue-500 transition-colors">
-              {clothImage ? (
-                <div className="relative w-full h-64">
-                  <Image
-                    src={clothImage}
-                    alt="Cloth"
-                    fill
-                    className="object-contain rounded-lg"
-                  />
-                  {detectingClothing && (
-                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-lg">
-                      <div className="text-white text-center">
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-2"></div>
-                        <p>Detecting item type...</p>
-                      </div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-semibold text-gray-800 dark:text-white">
+                Product Images
+              </h2>
+              {clothImages.length > 0 && (
+                <span className="text-sm text-gray-500 dark:text-gray-400">
+                  {clothImages.length} item{clothImages.length > 1 ? 's' : ''} added
+                </span>
+              )}
+            </div>
+
+            {/* Show uploaded images grid */}
+            {clothImages.length > 0 && (
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                {clothImages.map((item, index) => (
+                  <div key={index} className="relative bg-gray-100 dark:bg-gray-700 rounded-lg p-2">
+                    <div className="relative w-full h-32">
+                      <Image
+                        src={item.image}
+                        alt={`Product ${index + 1}`}
+                        fill
+                        className="object-contain rounded-lg"
+                      />
+                      <button
+                        onClick={() => removeClothImage(index)}
+                        className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm hover:bg-red-600"
+                      >
+                        ×
+                      </button>
                     </div>
-                  )}
-                  {detectedItem && !detectingClothing && (
-                    <div className="absolute bottom-2 left-2 bg-green-500 text-white px-3 py-1 rounded-full text-sm font-medium">
-                      Detected: {detectedItem}
+                    <div className="mt-2">
+                      {item.detectedItem && (
+                        <div className="text-xs text-green-600 dark:text-green-400 mb-1">
+                          Detected: {item.detectedItem}
+                        </div>
+                      )}
+                      <select
+                        value={item.category}
+                        onChange={(e) => updateClothCategory(index, e.target.value as Category)}
+                        className="w-full text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 dark:bg-gray-600 dark:text-white"
+                      >
+                        <option value="upper_body">Upper Body</option>
+                        <option value="lower_body">Lower Body</option>
+                        <option value="dresses">Dresses</option>
+                        <option value="shoes">Shoes</option>
+                        <option value="eyewear">Eyewear</option>
+                        <option value="headwear">Headwear</option>
+                        <option value="watch">Watch</option>
+                      </select>
                     </div>
-                  )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Upload new image */}
+            <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-6 text-center hover:border-blue-500 transition-colors">
+              {detectingClothing ? (
+                <div className="py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">Detecting item type...</p>
                 </div>
               ) : (
-                <div className="py-12">
+                <div className="py-4">
                   <svg
-                    className="mx-auto h-12 w-12 text-gray-400"
+                    className="mx-auto h-10 w-10 text-gray-400"
                     stroke="currentColor"
                     fill="none"
                     viewBox="0 0 48 48"
@@ -245,7 +328,10 @@ export default function Home() {
                     />
                   </svg>
                   <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-                    Upload image or paste product URL below
+                    {clothImages.length === 0 ? 'Upload product images' : 'Add another item'}
+                  </p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                    You can add shirt, pants, shoes, etc. - all will be applied one by one!
                   </p>
                 </div>
               )}
@@ -253,7 +339,8 @@ export default function Home() {
                 type="file"
                 accept="image/*"
                 onChange={handleClothImageUpload}
-                className="mt-4 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                disabled={detectingClothing}
+                className="mt-2 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-50"
               />
             </div>
 
@@ -272,68 +359,54 @@ export default function Home() {
                 />
                 <button
                   onClick={handleProductUrlSubmit}
-                  disabled={!productUrl || scrapingImage}
+                  disabled={!productUrl || detectingClothing}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
-                  {scrapingImage ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      Extracting...
-                    </>
-                  ) : (
-                    'Extract Image'
-                  )}
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  Pick Image
                 </button>
               </div>
+            </div>
+
+            {/* Auto-detect toggle */}
+            <div className="mt-4 flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="autoDetect"
+                checked={autoDetect}
+                onChange={(e) => setAutoDetect(e.target.checked)}
+                className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+              />
+              <label htmlFor="autoDetect" className="text-sm text-gray-600 dark:text-gray-400">
+                Auto-detect item type
+              </label>
             </div>
           </div>
         </div>
 
-        {/* Settings */}
-        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6 mb-8">
-          <h2 className="text-2xl font-semibold mb-4 text-gray-800 dark:text-white">
-            Settings
-          </h2>
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Item Type
-                </label>
-                <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-                  <input
-                    type="checkbox"
-                    checked={autoDetect}
-                    onChange={(e) => setAutoDetect(e.target.checked)}
-                    className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                  />
-                  Auto-detect
-                </label>
-              </div>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value as Category)}
-                disabled={autoDetect && detectingClothing}
-                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent dark:bg-gray-700 dark:text-white disabled:opacity-50"
-              >
-                <option value="upper_body">Upper Body (Shirts, Jackets, Tops)</option>
-                <option value="lower_body">Lower Body (Pants, Jeans, Skirts)</option>
-                <option value="dresses">Dresses & Full Outfits</option>
-                <option value="accessories">Accessories (Glasses, Watch, Hat, Shoes)</option>
-              </select>
-            </div>
-            <div className="flex items-end">
-              <div className="w-full p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                <p className="text-sm text-gray-600 dark:text-gray-300">
-                  {category === 'upper_body' && 'Will replace shirt/jacket/top only, keeping pants unchanged'}
-                  {category === 'lower_body' && 'Will replace pants/jeans/skirt only, keeping top unchanged'}
-                  {category === 'dresses' && 'Will replace the entire outfit'}
-                  {category === 'accessories' && 'Will add glasses, watch, hat or replace shoes'}
+        {/* Info Box */}
+        {clothImages.length > 1 && (
+          <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-xl p-4 mb-8">
+            <div className="flex items-start gap-3">
+              <svg className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div>
+                <p className="text-sm text-blue-800 dark:text-blue-200 font-medium">
+                  {clothImages.length} items will be applied one by one (auto-sorted for best results)
+                </p>
+                <p className="text-xs text-blue-600 dark:text-blue-300 mt-1">
+                  Order: {[...clothImages].sort((a, b) => {
+                    const priority: Record<Category, number> = { 'upper_body': 1, 'lower_body': 2, 'dresses': 1, 'shoes': 3, 'eyewear': 4, 'headwear': 4, 'watch': 4 };
+                    return priority[a.category] - priority[b.category];
+                  }).map(item => item.detectedItem || item.category).join(' → ')}
                 </p>
               </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Error Message */}
         {error && (
@@ -346,11 +419,16 @@ export default function Home() {
         <div className="text-center mb-8">
           <button
             onClick={handleTryOn}
-            disabled={loading || detectingClothing}
+            disabled={loading || detectingClothing || clothImages.length === 0}
             className="bg-gradient-to-r from-purple-600 to-blue-600 text-white font-semibold py-4 px-12 rounded-full text-lg shadow-lg hover:from-purple-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 transition-all"
           >
-            {loading ? 'Processing...' : 'Try On Now'}
+            {loading ? (loadingProgress || 'Processing...') : `Try On ${clothImages.length > 1 ? `${clothImages.length} Items` : 'Now'}`}
           </button>
+          {clothImages.length === 0 && (
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+              Add at least one product image to continue
+            </p>
+          )}
         </div>
 
         {/* Result */}
@@ -370,6 +448,14 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {/* Image Picker Popup */}
+      <ImagePickerPopup
+        url={productUrl}
+        isOpen={showImagePicker}
+        onClose={() => setShowImagePicker(false)}
+        onImageSelect={handleImagePickerSelect}
+      />
     </div>
   );
 }

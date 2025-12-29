@@ -11,7 +11,15 @@
       "Bash(gh --version:*)",
       "Bash(git remote:*)",
       "Bash(git push:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(curl:*)",
+      "Bash(del /f /q \"c:\\\\Users\\\\Muhammad Ahmed\\\\Desktop\\\\claudetester\\\\.next\\\\dev\\\\lock\")",
+      "Bash(tasklist:*)",
+      "Bash(taskkill:*)",
+      "Bash(npm run dev:*)",
+      "Bash(findstr:*)"
     ]
   }
 }
