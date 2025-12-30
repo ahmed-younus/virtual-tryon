@@ -1,87 +1,119 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Replicate from 'replicate';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+interface ClothItem {
+  image: string;
+  category: string;
+  detectedItem?: string;
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const { userImage, clothImage, category } = await request.json();
+    const body = await request.json();
 
-    if (!userImage || !clothImage) {
+    // Support both single cloth and multiple clothes
+    const userImage = body.userImage;
+    const clothImages: ClothItem[] = body.clothImages || (body.clothImage ? [{ image: body.clothImage, category: body.category || 'upper_body' }] : []);
+
+    if (!userImage || clothImages.length === 0) {
       return NextResponse.json(
-        { error: 'Both user image and cloth image are required' },
+        { error: 'User image and at least one cloth image are required' },
         { status: 400 }
       );
     }
 
-    const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN;
+    const GOOGLE_API_KEY = process.env.GOOGLE_AI_API_KEY;
 
-    if (!REPLICATE_API_TOKEN) {
+    if (!GOOGLE_API_KEY) {
       return NextResponse.json(
         {
-          error: 'REPLICATE_API_TOKEN not configured',
-          instructions: 'Add token to .env.local file'
+          error: 'GOOGLE_AI_API_KEY not configured',
+          instructions: 'Add your Google AI API key to .env.local file'
         },
         { status: 500 }
       );
     }
 
-    console.log('Starting Replicate virtual try-on with p-image-edit...');
-    console.log('Category:', category);
-    console.log('User image length:', userImage?.length || 0);
-    console.log('Cloth image length:', clothImage?.length || 0);
+    console.log('Starting virtual try-on with Gemini 3 Pro Image Preview (Direct API)...');
+    console.log('Number of clothing items:', clothImages.length);
 
-    const replicate = new Replicate({
-      auth: REPLICATE_API_TOKEN,
+    const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
+
+    // Use gemini-3-pro-image-preview for image generation
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-3-pro-image-preview',
+      generationConfig: {
+        // @ts-expect-error - responseModalities is valid for image models
+        responseModalities: ['image', 'text'],
+      },
     });
 
-    // Generate category-specific prompt
-    let clothingPrompt = '';
+    // Build dynamic prompt based on all clothing items
+    const clothingDescriptions = clothImages.map((item, index) => {
+      const itemName = item.detectedItem || item.category;
+      return `Image ${index + 2}: ${itemName}`;
+    }).join(', ');
 
-    if (category === 'lower_body') {
-      clothingPrompt = `Replace ONLY the pants/trousers/lower body clothing of the person in image 1 with the exact pants/jeans/trousers from image 2. Keep the upper body clothing (shirt, t-shirt, jacket) EXACTLY as it is - do not change it. Focus ONLY on replacing the lower body garment (pants, jeans, trousers, shorts, skirt). The new pants must fit naturally on the person's legs and waist.`;
-    } else if (category === 'dresses') {
-      clothingPrompt = `Replace the entire outfit of the person in image 1 with the dress/full outfit from image 2. This is a full body garment replacement including both upper and lower body.`;
-    } else if (category === 'shoes') {
-      clothingPrompt = `Replace ONLY the shoes/footwear of the person in image 1 with the exact shoes from image 2. Keep ALL clothing (shirt, pants, jacket, etc.) EXACTLY as it is - do not change any clothing. Focus ONLY on replacing the footwear/shoes. The new shoes must fit naturally on the person's feet. Do NOT add glasses, hats, or any other accessories.`;
-    } else if (category === 'eyewear') {
-      clothingPrompt = `Add ONLY the glasses/sunglasses from image 2 to the person's face in image 1. Place them naturally on the face, fitting properly on the nose and ears. Keep ALL clothing and other accessories EXACTLY as they are - do not change anything else. Focus ONLY on adding the eyewear.`;
-    } else if (category === 'headwear') {
-      clothingPrompt = `Add ONLY the hat/cap from image 2 to the person's head in image 1. Place it naturally on the head. Keep ALL clothing and other accessories EXACTLY as they are - do not change anything else. Focus ONLY on adding the headwear.`;
-    } else if (category === 'watch') {
-      clothingPrompt = `Add ONLY the watch from image 2 to the person's wrist in image 1. Place it naturally on the wrist. Keep ALL clothing and other accessories EXACTLY as they are - do not change anything else. Focus ONLY on adding the watch.`;
-    } else {
-      // upper_body (default)
-      clothingPrompt = `Replace ONLY the upper body clothing (shirt, t-shirt, top, jacket) of the person in image 1 with the exact garment from image 2. Keep the lower body clothing (pants, jeans, trousers) EXACTLY as it is - do not change it. Focus ONLY on replacing the upper body garment.`;
+    // Create a strict prompt that preserves identity
+    const clothingPrompt = `STRICT VIRTUAL TRY-ON - IDENTITY PRESERVATION IS CRITICAL
+
+Image 1: Reference person (DO NOT CHANGE THIS PERSON'S APPEARANCE)
+${clothingDescriptions}
+
+TASK: Edit ONLY the clothing on the person in Image 1. Replace their current clothes with the items shown in the other images.
+
+CRITICAL RULES - MUST FOLLOW:
+1. FACE: Keep the EXACT same face - same eyes, nose, mouth, skin tone, facial features, expression. DO NOT generate a new face.
+2. BODY: Keep the EXACT same body shape, proportions, height, weight. DO NOT change body type.
+3. POSE: Keep the EXACT same pose, arm positions, leg positions, head angle.
+4. BACKGROUND: Keep the EXACT same background, lighting, and environment.
+5. HAIR: Keep the EXACT same hairstyle, hair color, hair length.
+6. SKIN: Keep the EXACT same skin tone and any visible skin.
+
+ONLY CHANGE: The clothing items. Swap out their current clothes with the items from the reference images.
+
+This is a clothing swap only - the person's identity must remain 100% unchanged.
+
+Generate a single image showing the person wearing all the clothing items.`;
+
+    // Helper function to extract base64 data from data URL
+    const extractBase64 = (dataUrl: string): { data: string; mimeType: string } => {
+      const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        return { mimeType: match[1], data: match[2] };
+      }
+      // If no data URL prefix, assume it's raw base64 jpeg
+      return { mimeType: 'image/jpeg', data: dataUrl };
+    };
+
+    // Prepare all images for the model
+    const userImageData = extractBase64(userImage);
+    const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
+      { text: clothingPrompt },
+      { inlineData: { mimeType: userImageData.mimeType, data: userImageData.data } },
+    ];
+
+    // Add all clothing images
+    for (const item of clothImages) {
+      const clothData = extractBase64(item.image);
+      parts.push({ inlineData: { mimeType: clothData.mimeType, data: clothData.data } });
     }
 
-    const fullPrompt = `${clothingPrompt} CRITICAL REQUIREMENTS: 1) Match the EXACT colors from image 2 - DO NOT brighten or over-saturate. Keep natural, realistic tones. 2) Keep ALL other clothing items EXACTLY as they appear - do not modify, remove, or change any clothing that is not being replaced. 3) Maintain the person's exact pose, body structure, face, and background. 4) Preserve patterns, textures, and design details from image 2. 5) Ensure natural fitting with realistic wrinkles and folds. 6) Result must be photorealistic - no artificial enhancements.`;
-
-    console.log('Prompt:', fullPrompt);
-
-    // Use p-image-edit model for multi-image editing
     // Retry logic for rate limits
-    let output;
+    let result;
     let retries = 3;
     let lastError;
 
     while (retries > 0) {
       try {
-        output = await replicate.run(
-          "prunaai/p-image-edit",
-          {
-            input: {
-              images: [userImage, clothImage],
-              prompt: fullPrompt,
-              turbo: false,
-              aspect_ratio: "match_input_image",
-              seed: 42
-            }
-          }
-        );
+        console.log('Sending request to Gemini...');
+        result = await model.generateContent(parts);
         break;
       } catch (err: unknown) {
         lastError = err;
         const errorMessage = err instanceof Error ? err.message : String(err);
-        if (errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('throttled')) {
+
+        if (errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('quota')) {
           console.log(`Rate limited, waiting 10 seconds before retry... (${retries} retries left)`);
           await new Promise(resolve => setTimeout(resolve, 10000));
           retries--;
@@ -91,65 +123,64 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (!output) {
+    if (!result) {
       throw lastError || new Error('Failed after retries');
     }
 
-    console.log('Starting to process Replicate output...');
-    console.log('Output type:', typeof output);
-    console.log('Output value:', output);
+    console.log('Response received, processing...');
 
-    // Handle different output formats
+    const response = result.response;
+    const candidates = response.candidates;
+
+    if (!candidates || candidates.length === 0) {
+      return NextResponse.json(
+        { error: 'No response from model' },
+        { status: 500 }
+      );
+    }
+
+    // Look for image in the response
     let base64Result: string | null = null;
 
-    // If output is a ReadableStream or async iterable, collect binary data
-    if (output && typeof output === 'object' && Symbol.asyncIterator in output) {
-      const chunks: Uint8Array[] = [];
-      for await (const chunk of output as AsyncIterable<Uint8Array>) {
-        chunks.push(chunk);
+    for (const candidate of candidates) {
+      if (candidate.content && candidate.content.parts) {
+        for (const part of candidate.content.parts) {
+          // Check for inline data (image)
+          if ('inlineData' in part && part.inlineData) {
+            const { mimeType, data } = part.inlineData;
+            base64Result = `data:${mimeType};base64,${data}`;
+            console.log('Found image in response');
+            break;
+          }
+        }
       }
-
-      // Combine all chunks into a single buffer
-      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-      const combined = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const chunk of chunks) {
-        combined.set(chunk, offset);
-        offset += chunk.length;
-      }
-
-      // Convert to base64
-      base64Result = `data:image/jpeg;base64,${Buffer.from(combined).toString('base64')}`;
-      console.log('Successfully converted binary data to base64');
-    } else if (typeof output === 'string' && (output as string).startsWith('http')) {
-      // Handle URL format (legacy)
-      console.log('Fetching image from URL:', output);
-      const imageResponse = await fetch(output as string);
-      const imageBlob = await imageResponse.blob();
-      const buffer = await imageBlob.arrayBuffer();
-      base64Result = `data:image/jpeg;base64,${Buffer.from(buffer).toString('base64')}`;
-    } else if (Array.isArray(output) && output.length > 0) {
-      // Handle array of URLs
-      const imageUrl = output[0];
-      if (typeof imageUrl === 'string' && imageUrl.startsWith('http')) {
-        const imageResponse = await fetch(imageUrl);
-        const imageBlob = await imageResponse.blob();
-        const buffer = await imageBlob.arrayBuffer();
-        base64Result = `data:image/jpeg;base64,${Buffer.from(buffer).toString('base64')}`;
-      }
+      if (base64Result) break;
     }
 
     if (base64Result) {
       return NextResponse.json({
         result: base64Result,
-        message: 'AI-powered virtual try-on complete!'
+        message: `Virtual try-on complete! Applied ${clothImages.length} item(s).`
       });
+    }
+
+    // If no image found, check for text response (might contain error or explanation)
+    let textResponse = '';
+    for (const candidate of candidates) {
+      if (candidate.content && candidate.content.parts) {
+        for (const part of candidate.content.parts) {
+          if ('text' in part && part.text) {
+            textResponse += part.text;
+          }
+        }
+      }
     }
 
     return NextResponse.json(
       {
-        error: 'Unexpected output format from Replicate',
-        debug: `Output type: ${typeof output}`
+        error: 'No image generated by model',
+        details: textResponse || 'Model did not return an image',
+        debug: 'Check if the model supports image generation with the current prompt'
       },
       { status: 500 }
     );

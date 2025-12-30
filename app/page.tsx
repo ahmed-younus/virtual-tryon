@@ -130,11 +130,10 @@ export default function Home() {
 
     setLoading(true);
     setError('');
-    setLoadingProgress('');
+    setLoadingProgress(`Applying ${clothImages.length} item(s) at once...`);
 
     try {
-      // Sort items by priority: upper_body first, then lower_body, then accessories
-      // This gives more consistent results as the model works better with this order
+      // Sort items by priority for better prompt structure
       const categoryPriority: Record<Category, number> = {
         'upper_body': 1,
         'lower_body': 2,
@@ -149,42 +148,29 @@ export default function Home() {
         categoryPriority[a.category] - categoryPriority[b.category]
       );
 
-      let currentImage = userImage;
+      // Send ALL items in a single request - Gemini 2.5 Flash handles multiple images
+      const response = await fetch('/api/tryon', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userImage: userImage,
+          clothImages: sortedClothImages.map(item => ({
+            image: item.image,
+            category: item.category,
+            detectedItem: item.detectedItem,
+          })),
+        }),
+      });
 
-      // Process each cloth image sequentially with delays between calls
-      for (let i = 0; i < sortedClothImages.length; i++) {
-        const clothItem = sortedClothImages[i];
-        setLoadingProgress(`Applying ${clothItem.detectedItem || clothItem.category} (${i + 1}/${sortedClothImages.length})...`);
+      const data = await response.json();
 
-        // Add delay between API calls for more consistent results (except for first call)
-        if (i > 0) {
-          setLoadingProgress(`Stabilizing... then applying ${clothItem.detectedItem || clothItem.category} (${i + 1}/${sortedClothImages.length})...`);
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
-
-        const response = await fetch('/api/tryon', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            userImage: currentImage,
-            clothImage: clothItem.image,
-            category: clothItem.category,
-          }),
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error || `Failed to apply ${clothItem.detectedItem || clothItem.category}`);
-        }
-
-        // Use result as input for next iteration
-        currentImage = data.result;
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to apply clothing items');
       }
 
-      setResultImage(currentImage);
+      setResultImage(data.result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -331,7 +317,7 @@ export default function Home() {
                     {clothImages.length === 0 ? 'Upload product images' : 'Add another item'}
                   </p>
                   <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                    You can add shirt, pants, shoes, etc. - all will be applied one by one!
+                    Add shirt, pants, shoes, etc. - all applied in one go!
                   </p>
                 </div>
               )}
@@ -388,20 +374,20 @@ export default function Home() {
 
         {/* Info Box */}
         {clothImages.length > 1 && (
-          <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-xl p-4 mb-8">
+          <div className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-xl p-4 mb-8">
             <div className="flex items-start gap-3">
-              <svg className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              <svg className="w-5 h-5 text-green-600 dark:text-green-400 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
               <div>
-                <p className="text-sm text-blue-800 dark:text-blue-200 font-medium">
-                  {clothImages.length} items will be applied one by one (auto-sorted for best results)
+                <p className="text-sm text-green-800 dark:text-green-200 font-medium">
+                  {clothImages.length} items will be applied all at once using Gemini AI
                 </p>
-                <p className="text-xs text-blue-600 dark:text-blue-300 mt-1">
-                  Order: {[...clothImages].sort((a, b) => {
+                <p className="text-xs text-green-600 dark:text-green-300 mt-1">
+                  Items: {[...clothImages].sort((a, b) => {
                     const priority: Record<Category, number> = { 'upper_body': 1, 'lower_body': 2, 'dresses': 1, 'shoes': 3, 'eyewear': 4, 'headwear': 4, 'watch': 4 };
                     return priority[a.category] - priority[b.category];
-                  }).map(item => item.detectedItem || item.category).join(' → ')}
+                  }).map(item => item.detectedItem || item.category).join(' + ')}
                 </p>
               </div>
             </div>

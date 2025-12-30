@@ -13,6 +13,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@gradio/client": "^2.0.1",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^25.0.3",
